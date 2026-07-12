@@ -1,0 +1,11 @@
+[{:itonami.blueprint/id "cloud-itonami-isco-4221"
+  :itonami.blueprint/name "Community Travel Desk"
+  :itonami.blueprint/isco-08 "4221"
+  :itonami.blueprint/domain :office/travel-consulting
+  :itonami.blueprint/license "AGPL-3.0-or-later"
+  :itonami.blueprint/social-impact [:service-access :local-tourism :local-jobs]
+  :itonami.blueprint/governor :travel-consulting-governor
+  :itonami.blueprint/robotics true
+  :itonami.blueprint/required-technologies [:robotics :identity :forms :dmn :bpmn :audit-ledger]
+  :itonami.blueprint/status :public-oss
+  :db/id -1}]
