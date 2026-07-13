@@ -5,11 +5,25 @@ Open Business Blueprint for **ISCO-08 4221**: Travel Consultants and Clerks — 
 pure-cognitive work, the LLM-first wave, **no robotics gate** —
 eligible for actor implementation now.
 
-**Maturity: `:blueprint`** — blueprint only; **no actor implementation
-yet**, and none is claimed. The implemented actor will follow the
-fleet-standard pattern (advisor-LLM sealed behind the independent
-`:travel-consulting-governor` governor, human approval workflow, append-only
-audit ledger). Seventh wave-0 cognitive batch (ADR-2607122700 addenda).
+**Maturity: `:implemented`** — TravelConsultantsAdvisor ⊣
+TravelConsultantsGovernor as a langgraph StateGraph
+(`intake → advise → govern → decide → commit/hold`, human-approval
+interrupt), modeled on cloud-itonami-isco-4311's bookkeeping actor.
+14 tests / 28 assertions green.
+
+The booking HARD invariants — arithmetic, not a courtesy call:
+
+1. **Inventory arithmetic** — a proposed booking's units must not
+   exceed the registered available inventory (you cannot book what
+   isn't there).
+2. **Refund-cutoff floor** — a proposed cancellation's
+   days-before-departure must be ≥ the registered refund-cutoff-days
+   to qualify.
+
+Also HARD: unregistered/foreign inventory, unregistered organization,
+non-`:propose` effect. Escalations (always human sign-off):
+`:approve-group-booking` (large-party commitment), low confidence
+(< 0.6).
 
 
 
