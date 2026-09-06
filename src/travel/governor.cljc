@@ -9,32 +9,87 @@
   against the registered cutoff (refund eligibility is a day-count
   threshold, not a courtesy call).
 
+  Every op-specific check is DERIVED from `travel.operations/catalog`
+  rather than restated here. That is the whole point of the catalog:
+  when the branches were written out as `(= :approve-booking op)`, an
+  op that matched no branch collected no violation and came out
+  conforming, and `:approve-group-booking` — the op this actor itself
+  names as the dangerous one — was checked against no inventory at all.
+  See that namespace's docstring for the three measured escapes.
+
   HARD invariants (:hard? true, ALWAYS :hold, never overridable):
-    1. client provenance — the organization must be registered.
-    2. no-actuation      — proposal :effect must be :propose.
-    3. inventory basis      — an approval must cite a REGISTERED
-                           inventory line belonging to this client.
-    4. inventory arithmetic — a proposed booking's units must not
-                           exceed the inventory's registered
-                           :available-units (you cannot book what
-                           isn't there).
-    5. refund-cutoff floor  — a proposed cancellation's
-                           days-before-departure must be >= the
-                           inventory's registered :refund-cutoff-days
-                           to qualify (arithmetic, not a courtesy
-                           call).
+    1. client provenance  — the organization must be registered.
+    2. no-actuation       — proposal :effect must be :propose.
+    3. offered op         — the op must be one this actor offers
+                            (`travel.operations/offered?`). An op that
+                            was never offered is refused, not ignored.
+    4. inventory basis    — an inventory-basis op must cite a REGISTERED
+                            inventory line belonging to this client.
+    5. operand supplied   — every operand the catalog declares must be
+                            present and a number of the declared kind.
+                            An operand that was never supplied is not an
+                            operand that was checked.
+    6. registered figure  — the inventory line must carry the registered
+                            figure the operand is compared against. A
+                            comparison we cannot make is refused, not
+                            skipped.
+    7. operand arithmetic — each operand must satisfy its declared
+                            comparison: booking (and GROUP booking)
+                            units <= :available-units, refund
+                            days-before-departure >= :refund-cutoff-days.
   ESCALATION invariants (:escalate? true, human sign-off):
-    6. :op :approve-group-booking (large-party commitment).
-    7. low confidence (< `confidence-floor`)."
-  (:require [travel.store :as store]))
+    8. ops the catalog marks `:always-escalates?` (currently
+       :approve-group-booking — large-party commitment).
+    9. low confidence (< `confidence-floor`).
+
+  Escalation is ON TOP OF the hard invariants, never instead of them:
+  `travel.actor/approve!` resumes an escalated thread straight to
+  `:commit`, so anything that only escalated is something a human was
+  asked to sign off with an empty violation list."
+  (:require [travel.operations :as ops]
+            [travel.store :as store]))
 
 (def confidence-floor 0.6)
 
+(defn- operand-violations
+  "One violation per declared operand of `op` that is absent, not a
+  number of the declared kind, compared against a figure the inventory
+  line does not carry, or failing the declared comparison."
+  [op proposal inv]
+  (reduce-kv
+   (fn [acc field {:keys [kind compare against rule because]}]
+     (let [v (get proposal field)
+           figure (get inv against)]
+       (cond
+         (not (ops/operand-ok? kind v))
+         (conj acc {:rule :operand-missing
+                    :detail (str "operand " field " が " (name kind)
+                                 " ではない（" (pr-str v) "）"
+                                 "。供給されなかった operand は"
+                                 "検査された operand ではない")})
+
+         (not (number? figure))
+         (conj acc {:rule :inventory-incomplete
+                    :detail (str "inventory " (:inventory-id inv) " に "
+                                 against " が登録されていない"
+                                 "。比較できない検査を合格にしない")})
+
+         (not (ops/compare-ok? compare v figure))
+         (conj acc {:rule rule
+                    :detail (str field " " v " が登録済み " against " "
+                                 figure " を満たさない（" because "）")})
+
+         :else acc)))
+   []
+   (ops/operands op)))
+
 (defn- hard-violations [{:keys [request proposal]} client-record inv]
-  (let [{:keys [op units days-before-departure]} proposal
-        book? (= :approve-booking op)
-        refund? (= :approve-refund op)
-        inv-op? (or book? refund?)]
+  (let [op (:op proposal)
+        offered? (ops/offered? op)
+        ;; An unoffered op is refused on rule 3; do not ALSO report it as
+        ;; missing an inventory basis it was never defined to have —
+        ;; that would name the wrong reason.
+        basis? (and offered? (ops/inventory-basis? op))]
     (cond-> []
       (nil? client-record)
       (conj {:rule :no-client :detail "未登録 client"})
@@ -42,23 +97,22 @@
       (not= :propose (:effect proposal))
       (conj {:rule :no-actuation :detail "effect は :propose のみ許可（直接書込禁止）"})
 
-      (and inv-op? (nil? inv))
+      (not offered?)
+      (conj {:rule :unoffered-op
+             :detail (str "この actor が提供していない op: " (pr-str op)
+                          "。提供しているのは "
+                          (pr-str (sort (ops/offered-ops))))})
+
+      (and basis? (nil? inv))
       (conj {:rule :unknown-inventory :detail "未登録 inventory への承認は不可"})
 
-      (and inv-op? inv (not= (:client-id inv) (:client-id request)))
+      (and basis? inv (not= (:client-id inv) (:client-id request)))
       (conj {:rule :inventory-wrong-client :detail "inventory が別 client のもの"})
 
-      (and book? inv (number? units) (> units (:available-units inv)))
-      (conj {:rule :insufficient-inventory
-             :detail (str "予約数量 " units " > 在庫 " (:available-units inv)
-                          "（存在しない在庫は予約できない）")})
-
-      (and refund? inv (number? days-before-departure)
-           (< days-before-departure (:refund-cutoff-days inv)))
-      (conj {:rule :refund-cutoff-not-met
-             :detail (str "出発前日数 " days-before-departure " < 登録済み下限 "
-                          (:refund-cutoff-days inv)
-                          "（返金資格は日数の算術であって温情の電話ではない）")}))))
+      ;; Operand arithmetic runs for EVERY offered op that declares
+      ;; operands, group bookings included.
+      (and offered? inv)
+      (into (operand-violations op proposal inv)))))
 
 (defn check
   "Assess a proposal against `request`/`context`/`proposal` and a
@@ -72,7 +126,7 @@
         hard? (boolean (seq hard))
         conf (or (:confidence proposal) 0.0)
         low? (< conf confidence-floor)
-        risky-op? (= :approve-group-booking (:op proposal))]
+        risky-op? (ops/always-escalates? (:op proposal))]
     {:ok? (and (not hard?) (not low?) (not risky-op?))
      :violations hard
      :confidence conf
