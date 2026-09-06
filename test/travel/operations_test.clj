@@ -1,0 +1,58 @@
+(ns travel.operations-test
+  "The catalog is what makes an op reachable, so these pin the two
+  properties the governor leans on: an op is offered only by being
+  named, and an operand that was not supplied is not ok."
+  (:require [clojure.test :refer [deftest is testing]]
+            [travel.operations :as ops]))
+
+(deftest offers-exactly-the-three-named-operations
+  (is (= #{:approve-booking :approve-refund :approve-group-booking}
+         (ops/offered-ops))))
+
+(deftest an-op-not-in-the-catalog-is-not-offered
+  (testing "the escape hatch is not being mentioned, so absence must read as refusal"
+    (is (not (ops/offered? :wire-deposit-to-me)))
+    (is (not (ops/offered? :unknown)))
+    (is (not (ops/offered? nil)))))
+
+(deftest group-booking-carries-inventory-arithmetic-not-just-escalation
+  (testing "the dangerous op is checked, not merely escalated"
+    (is (ops/always-escalates? :approve-group-booking))
+    (is (ops/inventory-basis? :approve-group-booking))
+    (is (= {:kind :positive-number :compare :at-most :against :available-units}
+           (select-keys (get (ops/operands :approve-group-booking) :units)
+                        [:kind :compare :against])))))
+
+(deftest ordinary-booking-does-not-always-escalate
+  (is (not (ops/always-escalates? :approve-booking)))
+  (is (not (ops/always-escalates? :approve-refund))))
+
+(deftest an-absent-operand-is-not-ok
+  (testing "nil and non-numbers must not read the same as a checked value"
+    (is (not (ops/operand-ok? :positive-number nil)))
+    (is (not (ops/operand-ok? :positive-number "5")))
+    (is (not (ops/operand-ok? :non-negative-number nil)))
+    (is (ops/operand-ok? :positive-number 5))
+    (is (ops/operand-ok? :non-negative-number 0))))
+
+(deftest a-non-positive-booking-quantity-is-not-ok
+  (is (not (ops/operand-ok? :positive-number 0)))
+  (is (not (ops/operand-ok? :positive-number -5)))
+  (testing "days-before-departure may be 0 (departing today) but not negative"
+    (is (ops/operand-ok? :non-negative-number 0))
+    (is (not (ops/operand-ok? :non-negative-number -1)))))
+
+(deftest an-unknown-operand-kind-refuses
+  (testing "a typo in the catalog must fail closed, not pass everything"
+    (is (not (ops/operand-ok? :whole-number 5)))))
+
+(deftest an-unknown-comparison-refuses
+  (testing "a typo in the catalog must fail closed, not pass everything"
+    (is (not (ops/compare-ok? :roughly 5 20)))
+    (is (not (ops/compare-ok? nil 5 20)))))
+
+(deftest comparisons-are-inclusive-at-the-registered-bound
+  (is (ops/compare-ok? :at-most 20 20))
+  (is (not (ops/compare-ok? :at-most 21 20)))
+  (is (ops/compare-ok? :at-least 14 14))
+  (is (not (ops/compare-ok? :at-least 13 14))))

@@ -1,6 +1,7 @@
 (ns travel.governor-test
   (:require [clojure.test :refer [deftest is testing]]
             [travel.store :as store]
+            [travel.advisor :as advisor]
             [travel.governor :as governor]))
 
 (defn- fresh-store []
@@ -90,3 +91,93 @@
         v (governor/check req {} (assoc (book 5) :confidence 0.3) st)]
     (is (not (:hard? v)))
     (is (:escalate? v))))
+
+;; ── Regression: what the branch-per-op governor let through ───────────
+;; Each of these was measured red against the pre-catalog governor.
+
+(deftest hard-on-unoffered-op
+  (testing "an op this actor never offered is refused, not ignored"
+    (let [st (fresh-store)
+          v (governor/check req {} {:op :wire-deposit-to-me :effect :propose
+                                    :confidence 0.95 :stake :low} st)]
+      (is (:hard? v))
+      (is (some #(= :unoffered-op (:rule %)) (:violations v))))))
+
+(deftest hard-on-unoffered-op-minted-by-the-advisor-itself
+  (testing "no adversary needed: the mock advisor copies the request's :op through"
+    (let [st (fresh-store)
+          p (advisor/-advise (advisor/mock-advisor) st
+                             {:client-id "client-1" :op :wire-deposit-to-me})
+          v (governor/check req {} p st)]
+      (is (:hard? v))
+      (is (some #(= :unoffered-op (:rule %)) (:violations v))))))
+
+(deftest hard-on-unparseable-llm-proposal
+  (testing "parse-proposal emits {:op :unknown}; that must be refused, not merely escalated"
+    (let [st (fresh-store)
+          v (governor/check req {} {:op :unknown :effect :propose
+                                    :confidence 0.0 :stake :high} st)]
+      (is (:hard? v))
+      (is (some #(= :unoffered-op (:rule %)) (:violations v))))))
+
+(deftest hard-on-group-booking-over-inventory
+  (testing "the escalated op is checked too — a human cannot sign off on a violation they were never shown"
+    (let [st (fresh-store)
+          v (governor/check req {} {:op :approve-group-booking :effect :propose
+                                    :inventory-id "INV-1" :units 500
+                                    :confidence 0.9 :stake :high} st)]
+      (is (:hard? v))
+      (is (some #(= :insufficient-inventory (:rule %)) (:violations v))))))
+
+(deftest hard-on-group-booking-citing-no-inventory
+  (let [st (fresh-store)
+        v (governor/check req {} {:op :approve-group-booking :effect :propose
+                                  :units 5 :confidence 0.9 :stake :high} st)]
+    (is (:hard? v))
+    (is (some #(= :unknown-inventory (:rule %)) (:violations v)))))
+
+(deftest hard-on-group-booking-on-foreign-inventory
+  (let [st (fresh-store)]
+    (store/register-client! st {:client-id "client-2" :name "Other"})
+    (let [v (governor/check {:client-id "client-2"} {}
+                            {:op :approve-group-booking :effect :propose
+                             :inventory-id "INV-1" :units 5
+                             :confidence 0.9 :stake :high} st)]
+      (is (:hard? v))
+      (is (some #(= :inventory-wrong-client (:rule %)) (:violations v))))))
+
+(deftest hard-on-booking-with-no-units
+  (testing "an operand that was never supplied is not an operand that was checked"
+    (let [st (fresh-store)
+          v (governor/check req {} {:op :approve-booking :effect :propose
+                                    :inventory-id "INV-1"
+                                    :confidence 0.9 :stake :low} st)]
+      (is (:hard? v))
+      (is (some #(= :operand-missing (:rule %)) (:violations v))))))
+
+(deftest hard-on-refund-with-no-days
+  (let [st (fresh-store)
+        v (governor/check req {} {:op :approve-refund :effect :propose
+                                  :inventory-id "INV-1"
+                                  :confidence 0.9 :stake :low} st)]
+    (is (:hard? v))
+    (is (some #(= :operand-missing (:rule %)) (:violations v)))))
+
+(deftest hard-on-non-positive-booking-quantity
+  (let [st (fresh-store)]
+    (doseq [units [0 -5]]
+      (let [v (governor/check req {} (assoc (book units) :confidence 0.99) st)]
+        (is (:hard? v) (str "units " units))
+        (is (some #(= :operand-missing (:rule %)) (:violations v)))))))
+
+(deftest hard-when-the-inventory-line-lacks-the-registered-figure
+  (testing "a comparison we cannot make is refused, not skipped"
+    (let [st (store/mem-store)]
+      (store/register-client! st {:client-id "client-1" :name "Kobo Trade"})
+      ;; registered inventory with no :available-units figure at all
+      (store/register-inventory! st {:inventory-id "INV-2" :client-id "client-1"
+                                     :name "unpriced-charter"
+                                     :refund-cutoff-days 14})
+      (let [v (governor/check req {} (assoc (book 5) :inventory-id "INV-2") st)]
+        (is (:hard? v))
+        (is (some #(= :inventory-incomplete (:rule %)) (:violations v)))))))
