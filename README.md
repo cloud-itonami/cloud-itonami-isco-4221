@@ -43,7 +43,7 @@ Invariants 1, 2-for-group-bookings, 4 and 5 are regressions: each was
 measured escaping this governor before the catalog existed, and each
 has a test that goes red when the rule is removed. The mutations live
 in the superproject's `scripts/maturity-loop/mutations.edn`
-(`nbb scripts/maturity-loop/run.cljs --only cloud-itonami-isco-4221`).
+(`kbb --backend sci scripts/maturity-loop/run.cljk --only cloud-itonami-isco-4221`).
 
 
 
