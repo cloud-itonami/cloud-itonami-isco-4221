@@ -1,5 +1,5 @@
 (ns travel.actor-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [travel.actor :as actor]
             [travel.store :as store]))
 
