@@ -1,0 +1,32 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:physics` runs it.
+;;
+;; README: travel consultants (ISCO 4221) are a Wave-0 cognitive occupation
+;; (no robotics gate); blueprint.edn declares :itonami.blueprint/robotics
+;; true. The physical edge of a travel desk is handing the printed travel
+;; document pack to the client across the counter, and restocking brochure
+;; racks from the store room. These cases declare that edge.
+;;
+;; Every number without a cited source is marked `estimate` in its :basis.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isco-4221"
+ :cases
+ [{:id :document-pack-handoff
+   :kind :manipulator
+   :procedure "desktop arm hands the printed itinerary and ticket pack from the printer tray across the counter to the client; a faster handoff shortens the queue"
+   :params {:l1-m 0.30 :l2-m 0.25 :m1-kg 1.5 :m2-kg 1.0 :payload-kg 0.3
+            :from [0.15 0.40] :to [0.50 0.10] :steps 300}
+   :sweep {:param :duration-s :values [0.25 0.4 0.6 1.0 2.0]}
+   :quantity :peak-tau1-nm
+   :limit {:max 15.0 :basis "estimate: continuous shoulder torque of a desktop arm (~1-3 kg class)"}
+   :boundary {:lo 0.05 :hi 3.0}}
+  {:id :brochure-restock
+   :kind :transport
+   :procedure "robot carries a box of brochures from the store room to the brochure racks in the shop"
+   :params {:mass-kg 40.0 :payload-kg 15.0 :v-max-mps 0.8 :a-max-mps2 0.5
+            :brake-decel-mps2 0.8 :drive-force-n 90.0 :crr 0.02
+            :cog-height-m 0.55 :support-half-length-m 0.25}
+   :sweep {:param :distance-m :values [10.0 20.0 40.0 60.0 90.0]}
+   :quantity :cycle-time-s
+   :limit {:max 60.0 :basis "estimate: restocking runs between client visits, which leave about a minute free"}
+   :boundary {:lo 2.0 :hi 400.0}}]}
