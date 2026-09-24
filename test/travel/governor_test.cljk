@@ -1,5 +1,5 @@
 (ns travel.governor-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [travel.store :as store]
             [travel.advisor :as advisor]
             [travel.governor :as governor]))

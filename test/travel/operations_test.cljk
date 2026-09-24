@@ -2,7 +2,7 @@
   "The catalog is what makes an op reachable, so these pin the two
   properties the governor leans on: an op is offered only by being
   named, and an operand that was not supplied is not ok."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [travel.operations :as ops]))
 
 (deftest offers-exactly-the-three-named-operations
